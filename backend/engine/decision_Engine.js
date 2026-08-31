@@ -1,14 +1,14 @@
 const pool = require('../db/pool');
-const { MAX_RETRY_ATTEMPTS, COOLDOWN_HOURS, ESCALATE_AFTER_ATTEMPTS } = require('./guardrails');
+const { getRetryPolicy, ESCALATE_AFTER_ATTEMPTS } = require('./guardrails');
+const { getActiveCommitment } = require('./commitmentEngine');
 
 // Maps a diagnosis's recommended_action to a delivery channel.
-// This is a simple, deterministic mapping — not something the LLM decides.
 const ACTION_CHANNEL_MAP = {
   immediate_retry_link: 'sms',
   delayed_retry_link: 'sms',
   suggest_alternate_method: 'email',
   gentle_nudge_only: 'email',
-  escalate_to_human: null // no customer-facing channel, goes to internal review queue
+  escalate_to_human: null
 };
 
 async function getAttemptHistory(paymentId) {
@@ -33,19 +33,37 @@ function hoursSince(date) {
   return (Date.now() - new Date(date).getTime()) / (1000 * 60 * 60);
 }
 
-// Takes a diagnosis object (from diagnosisEngine) and the payment_id it belongs to.
+// Takes a diagnosis object and the payment_id it belongs to.
 // Returns a decision object and writes it to the `decisions` table.
 async function decideRecoveryAction(paymentId, diagnosis, optOutFlag = false) {
   const history = await getAttemptHistory(paymentId);
+  const policy = getRetryPolicy(diagnosis.cause);
+  const commitment = await getActiveCommitment(paymentId);
   let decision;
 
-  if (optOutFlag || history.optedOut) {
+  if (optOutFlag || history.optedOut || (commitment && commitment.intent === 'opt_out')) {
     decision = {
       decision: 'blocked',
       action: 'none',
       channel: null,
       attempt_number: history.attemptsSoFar,
-      reasoning: 'Customer opted out (opted_out flag set). No further automated contact permitted, per compliance policy.'
+      reasoning: 'Customer opted out. No further automated contact permitted, per compliance policy.'
+    };
+  } else if (commitment && commitment.intent === 'already_paid') {
+    decision = {
+      decision: 'blocked',
+      action: 'verify_payment',
+      channel: null,
+      attempt_number: history.attemptsSoFar,
+      reasoning: `Customer stated they already paid ("${commitment.raw_text}"). Pausing automated recovery pending manual verification, since our records still show this as unrecovered.`
+    };
+  } else if (commitment && commitment.intent === 'promised_to_pay' && commitment.status === 'active') {
+    decision = {
+      decision: 'blocked',
+      action: 'awaiting_promise',
+      channel: null,
+      attempt_number: history.attemptsSoFar,
+      reasoning: `Customer committed to paying by ${commitment.promised_date} ("${commitment.raw_text}"). Pausing automated retries until that date, to respect the stated intent rather than over-messaging.`
     };
   } else if (diagnosis.recommended_action === 'escalate_to_human') {
     decision = {
@@ -55,21 +73,29 @@ async function decideRecoveryAction(paymentId, diagnosis, optOutFlag = false) {
       attempt_number: history.attemptsSoFar,
       reasoning: `Diagnosis engine directly recommended escalation. Reason: ${diagnosis.reasoning}`
     };
-  } else if (history.attemptsSoFar >= MAX_RETRY_ATTEMPTS) {
+  } else if (!policy.retryable && history.attemptsSoFar >= policy.max_attempts) {
     decision = {
       decision: 'blocked',
       action: 'escalate_to_human',
       channel: null,
       attempt_number: history.attemptsSoFar,
-      reasoning: `Max retry attempts (${MAX_RETRY_ATTEMPTS}) reached with no successful recovery. Stopping automated retries and escalating to human review per policy.`
+      reasoning: `Cause "${diagnosis.cause}" is policy-marked non-retryable after ${policy.max_attempts} attempt(s) — repeated retries on this failure type rarely succeed and risk annoying the customer (mirrors real card-network guidance against retrying certain hard declines). Escalating instead.`
     };
-  } else if (hoursSince(history.lastAttemptAt) < COOLDOWN_HOURS) {
+  } else if (history.attemptsSoFar >= policy.max_attempts) {
+    decision = {
+      decision: 'blocked',
+      action: 'escalate_to_human',
+      channel: null,
+      attempt_number: history.attemptsSoFar,
+      reasoning: `Max retry attempts (${policy.max_attempts}) for cause "${diagnosis.cause}" reached with no successful recovery. Stopping automated retries and escalating to human review per policy.`
+    };
+  } else if (hoursSince(history.lastAttemptAt) < policy.cooldown_hours) {
     decision = {
       decision: 'blocked',
       action: 'none',
       channel: null,
       attempt_number: history.attemptsSoFar,
-      reasoning: `Cooldown period (${COOLDOWN_HOURS}h) has not elapsed since the last attempt. Waiting before next contact to avoid over-messaging the customer.`
+      reasoning: `Cooldown for cause "${diagnosis.cause}" is ${policy.cooldown_hours}h and has not yet elapsed since the last attempt. Waiting before next contact — timing is tuned per failure type, not flat, since e.g. an OTP mistake is worth retrying almost immediately while a hard decline is not.`
     };
   } else {
     const nextAttemptNumber = history.attemptsSoFar + 1;
@@ -79,7 +105,7 @@ async function decideRecoveryAction(paymentId, diagnosis, optOutFlag = false) {
       action: diagnosis.recommended_action,
       channel,
       attempt_number: nextAttemptNumber,
-      reasoning: `Attempt ${nextAttemptNumber} of ${MAX_RETRY_ATTEMPTS}. Cooldown elapsed, no opt-out on record. Proceeding with "${diagnosis.recommended_action}" based on diagnosed cause: ${diagnosis.cause}.`
+      reasoning: `Attempt ${nextAttemptNumber} of ${policy.max_attempts} (cause-specific cooldown: ${policy.cooldown_hours}h). No opt-out, no active commitment blocking this. Proceeding with "${diagnosis.recommended_action}" based on diagnosed cause: ${diagnosis.cause}.`
     };
 
     if (nextAttemptNumber >= ESCALATE_AFTER_ATTEMPTS) {
@@ -96,8 +122,7 @@ async function decideRecoveryAction(paymentId, diagnosis, optOutFlag = false) {
   return decision;
 }
 
-// Runs decisions for every payment that has a diagnosis but no decision yet —
-// used to process the batch after diagnosis has completed.
+// Runs decisions for every payment that has a diagnosis but no decision yet.
 async function decideUndecidedBatch() {
   const { rows } = await pool.query(`
     SELECT d.payment_id, d.cause, d.confidence, d.source, d.reasoning, d.recommended_action

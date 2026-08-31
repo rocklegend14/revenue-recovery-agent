@@ -76,11 +76,15 @@ router.get('/payments', async (req, res) => {
         ra.outcome,
         ra.amount_recovered_paise,
         ra.payment_link_url,
-        ra.outcome_at
+        ra.outcome_at,
+        c.intent AS commitment_intent,
+        c.promised_date AS commitment_promised_date,
+        c.status AS commitment_status
       FROM payment_events pe
       LEFT JOIN diagnoses dg ON dg.payment_id = pe.payment_id
       LEFT JOIN decisions dec ON dec.payment_id = pe.payment_id
       LEFT JOIN recovery_actions ra ON ra.payment_id = pe.payment_id
+      LEFT JOIN commitments c ON c.payment_id = pe.payment_id AND c.status = 'active'
       WHERE pe.event_type = 'payment.failed'
       ORDER BY pe.received_at DESC
     `);
@@ -95,11 +99,12 @@ router.get('/payments', async (req, res) => {
 router.get('/payments/:id/audit', async (req, res) => {
   const { id } = req.params;
   try {
-    const [events, diagnoses, decisions, actions] = await Promise.all([
+    const [events, diagnoses, decisions, actions, commitments] = await Promise.all([
       pool.query('SELECT * FROM payment_events WHERE payment_id = $1 ORDER BY received_at ASC', [id]),
       pool.query('SELECT * FROM diagnoses WHERE payment_id = $1 ORDER BY created_at ASC', [id]),
       pool.query('SELECT * FROM decisions WHERE payment_id = $1 ORDER BY created_at ASC', [id]),
-      pool.query('SELECT * FROM recovery_actions WHERE payment_id = $1 ORDER BY sent_at ASC', [id])
+      pool.query('SELECT * FROM recovery_actions WHERE payment_id = $1 ORDER BY sent_at ASC', [id]),
+      pool.query('SELECT * FROM commitments WHERE payment_id = $1 ORDER BY created_at ASC', [id])
     ]);
 
     if (events.rows.length === 0) {
@@ -126,6 +131,13 @@ router.get('/payments/:id/audit', async (req, res) => {
       detail: `Cause: ${d.cause} (${d.confidence} confidence, via ${d.source})`,
       reasoning: d.reasoning,
       meta: { confidence: d.confidence, source: d.source, recommended_action: d.recommended_action }
+    }));
+
+    commitments.rows.forEach(c => timeline.push({
+      step: 'customer_replied',
+      at: c.created_at,
+      detail: `"${c.raw_text}"${c.promised_date ? ' — promised by ' + c.promised_date : ''} (${c.status})`,
+      meta: { intent: c.intent, promised_date: c.promised_date, status: c.status }
     }));
 
     decisions.rows.forEach(d => timeline.push({
@@ -158,7 +170,11 @@ router.get('/payments/:id/audit', async (req, res) => {
     const finalAction = actions.rows[0];
     const finalDecision = decisions.rows[decisions.rows.length - 1];
     const isEscalated = finalDecision && finalDecision.decision === 'blocked' && finalDecision.action === 'escalate_to_human';
-    const finalOutcome = isEscalated ? 'escalated' : (finalAction ? finalAction.outcome : 'no_action_taken');
+    const activeCommitment = commitments.rows.filter(c => c.status === 'active').slice(-1)[0] || null;
+    let finalOutcome = isEscalated ? 'escalated' : (finalAction ? finalAction.outcome : 'no_action_taken');
+    if (activeCommitment && finalOutcome !== 'recovered') {
+      finalOutcome = activeCommitment.intent === 'opt_out' ? 'opted_out' : 'awaiting_promise';
+    }
 
     const failedAt = events.rows[0].received_at;
     const resolvedAt = finalAction?.outcome_at || null;
@@ -170,6 +186,10 @@ router.get('/payments/:id/audit', async (req, res) => {
     let summary;
     if (finalOutcome === 'recovered') {
       summary = `Recovered ${amountStr}${channel ? ' — customer paid via ' + channel : ''}${timeToResolution ? ', ' + timeToResolution + ' after the original failure' : ''}.`;
+    } else if (finalOutcome === 'awaiting_promise') {
+      summary = `Customer committed to paying by ${activeCommitment.promised_date} — automated retries paused until then.`;
+    } else if (finalOutcome === 'opted_out') {
+      summary = `Customer asked not to be contacted again — all automated recovery stopped.`;
     } else if (finalOutcome === 'pending') {
       summary = `Recovery link sent${channel ? ' via ' + channel : ''} — awaiting customer payment.`;
     } else if (finalOutcome === 'escalated') {
@@ -185,6 +205,12 @@ router.get('/payments/:id/audit', async (req, res) => {
       amount_paise: events.rows[0].amount_paise,
       final_outcome: finalOutcome,
       summary,
+      active_commitment: activeCommitment ? {
+        intent: activeCommitment.intent,
+        promised_date: activeCommitment.promised_date,
+        raw_text: activeCommitment.raw_text
+      } : null,
+      manage_link: finalAction?.response_token ? `${(process.env.PUBLIC_BASE_URL || 'http://localhost:3000').replace(/\/+$/, '')}/respond/${finalAction.response_token}` : null,
       time_to_resolution: timeToResolution,
       amount_recovered_paise: finalAction ? finalAction.amount_recovered_paise : 0,
       is_real_recovery: !!(finalAction && finalAction.payment_link_id),

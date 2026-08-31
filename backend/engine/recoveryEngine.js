@@ -1,6 +1,7 @@
 const pool = require('../db/pool');
 const { createPaymentLink } = require('../services/razorpayClient');
 const { getRecoveryMessage } = require('./messageTemplates');
+const { generateResponseToken } = require('../routes/respond');
 
 // Plausible simulated outcomes, roughly weighted by real-world recovery-rate
 // expectations per action type. Used ONLY for records with fake synthetic
@@ -36,6 +37,9 @@ async function getProceedDecisionsAwaitingAction() {
 // so delivery can actually be verified live.
 async function executeRealRecovery(record, realContact, realEmail) {
   const description = getRecoveryMessage(record.cause);
+  const responseToken = generateResponseToken();
+  const baseUrl = (process.env.PUBLIC_BASE_URL || 'http://localhost:3000').replace(/\/+$/, '');
+  const manageLink = `${baseUrl}/respond/${responseToken}`;
 
   try {
     const link = await createPaymentLink({
@@ -48,19 +52,20 @@ async function executeRealRecovery(record, realContact, realEmail) {
 
     await pool.query(
       `INSERT INTO recovery_actions
-        (payment_id, action_type, channel, payment_link_id, payment_link_url, outcome)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [record.payment_id, record.action, record.channel, link.payment_link_id, link.payment_link_url, 'pending']
+        (payment_id, action_type, channel, payment_link_id, payment_link_url, outcome, response_token)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [record.payment_id, record.action, record.channel, link.payment_link_id, link.payment_link_url, 'pending', responseToken]
     );
 
     console.log(`[REAL] Payment Link created for ${record.payment_id}: ${link.payment_link_url}`);
-    return { ...record, mode: 'real', payment_link_url: link.payment_link_url, outcome: 'pending' };
+    console.log(`[REAL] Manage-payment link for ${record.payment_id}: ${manageLink}`);
+    return { ...record, mode: 'real', payment_link_url: link.payment_link_url, manage_link: manageLink, outcome: 'pending' };
   } catch (err) {
     console.error(`[REAL] Failed to create Payment Link for ${record.payment_id}:`, err.message);
     await pool.query(
-      `INSERT INTO recovery_actions (payment_id, action_type, channel, outcome)
-       VALUES ($1, $2, $3, $4)`,
-      [record.payment_id, record.action, record.channel, 'failed_to_send']
+      `INSERT INTO recovery_actions (payment_id, action_type, channel, outcome, response_token)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [record.payment_id, record.action, record.channel, 'failed_to_send', responseToken]
     );
     return { ...record, mode: 'real', outcome: 'failed_to_send' };
   }
@@ -71,12 +76,13 @@ async function executeRealRecovery(record, realContact, realEmail) {
 async function executeSimulatedRecovery(record) {
   const outcome = weightedOutcome(record.action);
   const amountRecovered = outcome === 'recovered' ? record.amount_paise : 0;
+  const responseToken = generateResponseToken();
 
   await pool.query(
     `INSERT INTO recovery_actions
-      (payment_id, action_type, channel, outcome, amount_recovered_paise, outcome_at)
-     VALUES ($1, $2, $3, $4, $5, NOW())`,
-    [record.payment_id, record.action, record.channel, outcome, amountRecovered]
+      (payment_id, action_type, channel, outcome, amount_recovered_paise, outcome_at, response_token)
+     VALUES ($1, $2, $3, $4, $5, NOW(), $6)`,
+    [record.payment_id, record.action, record.channel, outcome, amountRecovered, responseToken]
   );
 
   return { ...record, mode: 'simulated', outcome, amount_recovered_paise: amountRecovered };

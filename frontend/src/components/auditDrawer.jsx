@@ -3,6 +3,7 @@ import { toRupees } from '../api';
 const STEP_LABELS = {
   failed: 'PAYMENT FAILED',
   diagnosed: 'DIAGNOSED',
+  customer_replied: 'CUSTOMER REPLIED',
   decided: 'DECISION: PROCEED',
   blocked: 'DECISION: BLOCKED',
   action_sent: 'ACTION SENT',
@@ -12,6 +13,7 @@ const STEP_LABELS = {
 const STEP_ICONS = {
   failed: '✕',
   diagnosed: '🔍',
+  customer_replied: '💬',
   decided: '→',
   blocked: '⛔',
   action_sent: '✉',
@@ -21,6 +23,7 @@ const STEP_ICONS = {
 const STEP_COLORS = {
   failed: 'text-escalated',
   diagnosed: 'text-textPrimary',
+  customer_replied: 'text-pending',
   decided: 'text-recovered',
   blocked: 'text-pending',
   action_sent: 'text-textPrimary',
@@ -32,7 +35,9 @@ const OUTCOME_BADGE = {
   pending: 'bg-pending/15 text-pending border-pending/30',
   escalated: 'bg-escalated/15 text-escalated border-escalated/30',
   no_response: 'bg-textMuted/15 text-textMuted border-textMuted/30',
-  no_action_taken: 'bg-textMuted/15 text-textMuted border-textMuted/30'
+  no_action_taken: 'bg-textMuted/15 text-textMuted border-textMuted/30',
+  awaiting_promise: 'bg-pending/15 text-pending border-pending/30',
+  opted_out: 'bg-textMuted/15 text-textMuted border-textMuted/30'
 };
 
 const OUTCOME_ICON = {
@@ -40,7 +45,9 @@ const OUTCOME_ICON = {
   pending: '…',
   escalated: '⛔',
   no_response: '—',
-  no_action_taken: '—'
+  no_action_taken: '—',
+  awaiting_promise: '💬',
+  opted_out: '—'
 };
 
 function formatTime(iso) {
@@ -101,6 +108,16 @@ export default function AuditDrawer({ audit, onClose }) {
               className="font-mono text-xs text-recovered underline underline-offset-2"
             >
               view link ↗
+            </a>
+          )}
+          {audit.manage_link && (
+            <a
+              href={audit.manage_link}
+              target="_blank"
+              rel="noreferrer"
+              className="font-mono text-xs text-pending underline underline-offset-2"
+            >
+              open manage-payment page ↗
             </a>
           )}
         </div>

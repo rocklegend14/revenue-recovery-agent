@@ -4,12 +4,17 @@ const cors = require('cors');
 const pool = require('./db/pool');
 const webhooksRouter = require('./routes/webhooks');
 const dashboardRouter = require('./routes/dashboard');
+const { router: respondRouter } = require('./routes/respond');
 
 const app = express();
 
 // Webhook route needs the RAW body for signature verification,
 // so it's mounted BEFORE express.json() and cors() and handles its own parsing.
 app.use('/webhooks', webhooksRouter);
+
+// Public customer-facing "manage this payment" page — no auth, no CORS needed
+// since it's opened directly in a customer's browser, not called from the React app.
+app.use('/respond', respondRouter);
 
 app.use(cors()); // allows the React dev server (different port) to call this API
 app.use(express.json());

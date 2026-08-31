@@ -7,7 +7,21 @@ const OUTCOME_STYLES = {
   failed_to_send: 'bg-escalated/15 text-escalated border-escalated/30'
 };
 
-function OutcomePill({ decision, action, outcome }) {
+function OutcomePill({ decision, action, outcome, commitmentIntent, commitmentDate }) {
+  if (commitmentIntent === 'promised_to_pay') {
+    return (
+      <span className="font-mono text-xs px-2 py-1 rounded-full border bg-pending/15 text-pending border-pending/30">
+        promised {commitmentDate ? `· ${commitmentDate}` : ''}
+      </span>
+    );
+  }
+  if (commitmentIntent === 'opt_out') {
+    return (
+      <span className="font-mono text-xs px-2 py-1 rounded-full border bg-textMuted/15 text-textMuted border-textMuted/30">
+        opted out
+      </span>
+    );
+  }
   if (decision === 'blocked' && action === 'escalate_to_human') {
     return (
       <span className="font-mono text-xs px-2 py-1 rounded-full border bg-escalated/15 text-escalated border-escalated/30">
@@ -52,7 +66,13 @@ export default function PaymentsTable({ payments, onSelect }) {
                 <td className="px-4 py-3 font-body text-textMuted">{p.cause || '—'}</td>
                 <td className="px-4 py-3 font-body text-textMuted">{p.action || '—'}</td>
                 <td className="px-4 py-3">
-                  <OutcomePill decision={p.decision} action={p.action} outcome={p.outcome} />
+                  <OutcomePill
+                    decision={p.decision}
+                    action={p.action}
+                    outcome={p.outcome}
+                    commitmentIntent={p.commitment_intent}
+                    commitmentDate={p.commitment_promised_date}
+                  />
                 </td>
               </tr>
             ))}
