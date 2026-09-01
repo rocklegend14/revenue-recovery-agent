@@ -1,24 +1,16 @@
 const pool = require('../db/pool');
-const { createPaymentLink } = require('../services/razorpayClient');
+const gateway = require('../services/gateways');
+const { sendRecoveryEmail } = require('../services/emailSender');
 const { getRecoveryMessage } = require('./messageTemplates');
 const { generateResponseToken } = require('../routes/respond');
 
-// Plausible simulated outcomes, roughly weighted by real-world recovery-rate
-// expectations per action type. Used ONLY for records with fake synthetic
-// contact info that cannot actually receive a message.
-const SIMULATED_OUTCOME_WEIGHTS = {
-  immediate_retry_link: { recovered: 0.72, no_response: 0.28 },
-  delayed_retry_link: { recovered: 0.55, no_response: 0.45 },
-  suggest_alternate_method: { recovered: 0.40, no_response: 0.60 },
-  gentle_nudge_only: { recovered: 0.30, no_response: 0.70 }
-};
-
-function weightedOutcome(action) {
-  const weights = SIMULATED_OUTCOME_WEIGHTS[action] || { recovered: 0.5, no_response: 0.5 };
-  return Math.random() < weights.recovered ? 'recovered' : 'no_response';
+function baseUrl() {
+  return (process.env.PUBLIC_BASE_URL || 'http://localhost:3000').replace(/\/+$/, '');
 }
 
-async function getProceedDecisionsAwaitingAction() {
+// Returns every decision that's ready to be sent: decision = 'proceed' and
+// no recovery_actions row yet. This is the merchant's "approval queue".
+async function getPendingApprovalQueue() {
   const { rows } = await pool.query(`
     SELECT dec.payment_id, dec.action, dec.channel, dec.attempt_number,
            pe.amount_paise, pe.customer_contact, pe.customer_email,
@@ -33,19 +25,21 @@ async function getProceedDecisionsAwaitingAction() {
   return rows;
 }
 
-// Executes ONE real Payment Link, overriding contact info with the builder's own,
-// so delivery can actually be verified live.
-async function executeRealRecovery(record, realContact, realEmail) {
+// Executes one recovery action, sending to the REAL customer contact
+// captured from the webhook by default. overrideContact/overrideEmail
+// exist only for demo/testing against synthetic records with fake contacts.
+async function executeRecoveryAction(record, options = {}) {
+  const contact = options.overrideContact || record.customer_contact;
+  const email = options.overrideEmail || record.customer_email;
   const description = getRecoveryMessage(record.cause);
   const responseToken = generateResponseToken();
-  const baseUrl = (process.env.PUBLIC_BASE_URL || 'http://localhost:3000').replace(/\/+$/, '');
-  const manageLink = `${baseUrl}/respond/${responseToken}`;
+  const manageLink = `${baseUrl()}/respond/${responseToken}`;
 
   try {
-    const link = await createPaymentLink({
+    const link = await gateway.createPaymentLink({
       amountPaise: record.amount_paise,
-      contact: realContact,
-      email: realEmail,
+      contact,
+      email,
       description,
       callbackUrl: process.env.PAYMENT_LINK_CALLBACK_URL || undefined
     });
@@ -53,70 +47,49 @@ async function executeRealRecovery(record, realContact, realEmail) {
     await pool.query(
       `INSERT INTO recovery_actions
         (payment_id, action_type, channel, payment_link_id, payment_link_url, outcome, response_token)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [record.payment_id, record.action, record.channel, link.payment_link_id, link.payment_link_url, 'pending', responseToken]
+       VALUES ($1, $2, $3, $4, $5, 'pending', $6)`,
+      [record.payment_id, record.action, record.channel, link.linkId, link.linkUrl, responseToken]
     );
 
-    console.log(`[REAL] Payment Link created for ${record.payment_id}: ${link.payment_link_url}`);
-    console.log(`[REAL] Manage-payment link for ${record.payment_id}: ${manageLink}`);
-    return { ...record, mode: 'real', payment_link_url: link.payment_link_url, manage_link: manageLink, outcome: 'pending' };
+    if (email) {
+      await sendRecoveryEmail({
+        to: email,
+        amountRupees: (record.amount_paise / 100).toFixed(2),
+        paymentLinkUrl: link.linkUrl,
+        manageLink,
+        cause: record.cause
+      });
+    }
+
+    console.log(`Recovery sent for ${record.payment_id}: ${link.linkUrl}`);
+    return { payment_id: record.payment_id, status: 'sent', linkUrl: link.linkUrl };
   } catch (err) {
-    console.error(`[REAL] Failed to create Payment Link for ${record.payment_id}:`, err.message);
+    console.error(`Failed to send recovery for ${record.payment_id}:`, err.message);
     await pool.query(
       `INSERT INTO recovery_actions (payment_id, action_type, channel, outcome, response_token)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [record.payment_id, record.action, record.channel, 'failed_to_send', responseToken]
+       VALUES ($1, $2, $3, 'failed_to_send', $4)`,
+      [record.payment_id, record.action, record.channel, responseToken]
     );
-    return { ...record, mode: 'real', outcome: 'failed_to_send' };
+    return { payment_id: record.payment_id, status: 'failed', error: err.message };
   }
 }
 
-// Logs a simulated recovery action — no real API call, since synthetic contact
-// info cannot actually receive anything.
-async function executeSimulatedRecovery(record) {
-  const outcome = weightedOutcome(record.action);
-  const amountRecovered = outcome === 'recovered' ? record.amount_paise : 0;
-  const responseToken = generateResponseToken();
+// The "single tap" — merchant approves, this sends everything currently queued.
+async function runApprovedBatch(options = {}) {
+  const queue = await getPendingApprovalQueue();
+  console.log(`Sending recovery to ${queue.length} customer(s)...`);
 
-  await pool.query(
-    `INSERT INTO recovery_actions
-      (payment_id, action_type, channel, outcome, amount_recovered_paise, outcome_at, response_token)
-     VALUES ($1, $2, $3, $4, $5, NOW(), $6)`,
-    [record.payment_id, record.action, record.channel, outcome, amountRecovered, responseToken]
-  );
-
-  return { ...record, mode: 'simulated', outcome, amount_recovered_paise: amountRecovered };
-}
-
-// Main entry point: runs recovery for all pending proceed-decisions.
-// `realCount` records (in order) get real Payment Links using realContact/realEmail;
-// the rest are simulated.
-async function runRecoveryBatch({ realCount = 5, realContact, realEmail } = {}) {
-  const records = await getProceedDecisionsAwaitingAction();
-  console.log(`Found ${records.length} proceed-decisions awaiting recovery action.`);
-
-  if (realCount > 0 && (!realContact || !realEmail)) {
-    throw new Error('realContact and realEmail are required when realCount > 0');
-  }
-
-  const results = { real: 0, simulated: 0, recovered: 0, failed: 0 };
-
-  for (let i = 0; i < records.length; i++) {
-    const record = records[i];
-    let outcome;
-
-    if (i < realCount) {
-      outcome = await executeRealRecovery(record, realContact, realEmail);
-      results.real++;
+  const results = { sent: 0, failed: 0, total_amount_paise: 0 };
+  for (const record of queue) {
+    const outcome = await executeRecoveryAction(record, options);
+    if (outcome.status === 'sent') {
+      results.sent++;
+      results.total_amount_paise += record.amount_paise;
     } else {
-      outcome = await executeSimulatedRecovery(record);
-      results.simulated++;
-      if (outcome.outcome === 'recovered') results.recovered++;
+      results.failed++;
     }
   }
-
-  console.log(`Recovery batch complete. Real: ${results.real}, Simulated: ${results.simulated}, Simulated-recovered: ${results.recovered}`);
   return results;
 }
 
-module.exports = { runRecoveryBatch };
+module.exports = { getPendingApprovalQueue, executeRecoveryAction, runApprovedBatch };

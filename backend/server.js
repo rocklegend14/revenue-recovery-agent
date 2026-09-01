@@ -4,6 +4,7 @@ const cors = require('cors');
 const pool = require('./db/pool');
 const webhooksRouter = require('./routes/webhooks');
 const dashboardRouter = require('./routes/dashboard');
+const recoveryRouter = require('./routes/recovery');
 const { router: respondRouter } = require('./routes/respond');
 
 const app = express();
@@ -20,6 +21,7 @@ app.use(cors()); // allows the React dev server (different port) to call this AP
 app.use(express.json());
 
 app.use('/api', dashboardRouter); // exposes /api/dashboard/summary, /api/payments, /api/payments/:id/audit
+app.use('/api/recovery', recoveryRouter); // exposes /api/recovery/pending, /api/recovery/run
 
 // Root route
 app.get('/', (req, res) => {

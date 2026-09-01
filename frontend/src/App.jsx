@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from './api';
 import SummaryHero from './components/SummaryHero';
+import RecoveryApprovalCard from './components/RecoveryApprovalCard';
 import CauseBreakdown from './components/CauseBreakdown';
 import PaymentsTable from './components/PaymentsTable';
 import AuditDrawer from './components/AuditDrawer';
@@ -8,27 +9,29 @@ import AuditDrawer from './components/AuditDrawer';
 export default function App() {
   const [summary, setSummary] = useState(null);
   const [payments, setPayments] = useState([]);
+  const [pending, setPending] = useState(null);
   const [selectedAudit, setSelectedAudit] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  useEffect(() => {
-    async function load() {
-      try {
-        const [summaryData, paymentsData] = await Promise.all([
-          api.getSummary(),
-          api.getPayments()
-        ]);
-        setSummary(summaryData);
-        setPayments(paymentsData);
-      } catch (err) {
-        setError(err.message);
-      } finally {
-        setLoading(false);
-      }
+  async function loadAll() {
+    try {
+      const [summaryData, paymentsData, pendingData] = await Promise.all([
+        api.getSummary(),
+        api.getPayments(),
+        api.getPendingRecovery()
+      ]);
+      setSummary(summaryData);
+      setPayments(paymentsData);
+      setPending(pendingData);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
     }
-    load();
-  }, []);
+  }
+
+  useEffect(() => { loadAll(); }, []);
 
   async function handleSelectPayment(paymentId) {
     try {
@@ -58,6 +61,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-ink text-textPrimary px-6 md:px-12 py-10 max-w-5xl mx-auto">
       <SummaryHero summary={summary} />
+      <RecoveryApprovalCard pending={pending} onSent={loadAll} />
       <CauseBreakdown breakdown={summary?.breakdown_by_cause} />
       <PaymentsTable payments={payments} onSelect={handleSelectPayment} />
       {selectedAudit && (

@@ -9,7 +9,13 @@ async function get(path) {
 export const api = {
   getSummary: () => get('/api/dashboard/summary'),
   getPayments: () => get('/api/payments'),
-  getAudit: (paymentId) => get(`/api/payments/${paymentId}/audit`)
+  getAudit: (paymentId) => get(`/api/payments/${paymentId}/audit`),
+  getPendingRecovery: () => get('/api/recovery/pending'),
+  runRecovery: async () => {
+    const res = await fetch(`${BASE_URL}/api/recovery/run`, { method: 'POST' });
+    if (!res.ok) throw new Error(`Request failed: /api/recovery/run (${res.status})`);
+    return res.json();
+  }
 };
 
 export function toRupees(paise) {
