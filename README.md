@@ -132,7 +132,6 @@ Full annotated layout in [`DEVELOPER_DOCUMENTATION.md` ](./DEVELOPER_DOCUMENTATI
 
 - [`DEVELOPER_DOCUMENTATION.md`](./DEVELOPER_DOCUMENTATION.md) — architecture, stack, and how every piece works
 - [`BUILD_JOURNAL.md`](./BUILD_JOURNAL.md) — problems hit during the build and how they were solved, from planning to final product
-- [`DEMO_SCRIPT.md`](./DEMO_SCRIPT.md) — step-by-step walkthrough script covering every feature and escalation path
 - [`MERCHANT_SETUP.md`](./MERCHANT_SETUP.md) — non-technical setup guide
 
 ## License
