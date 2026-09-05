@@ -4,7 +4,7 @@
 
 Built for Razorpay's Buildathon, Track 03: AI Revenue Recovery.
 
-[Live demo](#) · [Technical documentation](./DEVELOPER_DOCUMENTATION.md) · [Build journal](./BUILD_JOURNAL.md) · [Demo script](./DEMO_SCRIPT.md)
+[Live demo](#) · [Technical documentation](./DEVELOPER_DOCUMENTATION.md) · [Build journal](./BUILD_JOURNAL.md) 
 
 ---
 
