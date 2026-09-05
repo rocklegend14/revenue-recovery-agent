@@ -5,9 +5,27 @@
 
 const RESEND_API_URL = 'https://api.resend.com/emails';
 
+// IANA reserved for documentation/testing — these can never receive real
+// mail (that's the whole point of them existing), which is exactly why the
+// synthetic batch generator uses them for fake customer emails. Skipping
+// the Resend call for these avoids a noisy, expected 422 in the logs for
+// every simulated record — the real Payment Link (Razorpay's own SMS/email)
+// still goes out regardless, since this only skips the supplementary email.
+const NON_DELIVERABLE_DOMAINS = ['example.com', 'example.org', 'example.net'];
+
+function isNonDeliverable(email) {
+  const domain = (email || '').split('@')[1]?.toLowerCase();
+  return NON_DELIVERABLE_DOMAINS.includes(domain);
+}
+
 async function sendRecoveryEmail({ to, amountRupees, paymentLinkUrl, manageLink, cause }) {
   if (!process.env.RESEND_API_KEY) {
     console.warn('RESEND_API_KEY not set — skipping custom recovery email (gateway\'s native notification still sends).');
+    return false;
+  }
+
+  if (isNonDeliverable(to)) {
+    console.log(`Skipping custom recovery email for ${to} — synthetic/reserved domain, not real (gateway's native notification still sends).`);
     return false;
   }
 

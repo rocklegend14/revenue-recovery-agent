@@ -6,6 +6,7 @@ const webhooksRouter = require('./routes/webhooks');
 const dashboardRouter = require('./routes/dashboard');
 const recoveryRouter = require('./routes/recovery');
 const { router: respondRouter } = require('./routes/respond');
+const { startPromiseScheduler } = require('./scheduler');
 
 const app = express();
 
@@ -45,4 +46,5 @@ app.get('/health/db', async (req, res) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
+  startPromiseScheduler();
 });

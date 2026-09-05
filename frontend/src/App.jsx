@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react';
 import { api } from './api';
-import SummaryHero from './components/SummaryHero';
-import RecoveryApprovalCard from './components/RecoveryApprovalCard';
-import CauseBreakdown from './components/CauseBreakdown';
-import PaymentsTable from './components/PaymentsTable';
-import AuditDrawer from './components/AuditDrawer';
+import Navbar from './components/Navbar';
+import SummaryHero from './components/summaryHero';
+import RecoveryApprovalCard from './components/recoveryApprovalCard';
+import CauseBreakdown from './components/causeBreakdown';
+import PaymentsTable from './components/paymentsTable';
+import AuditDrawer from './components/auditDrawer';
 
 export default function App() {
+  const [activeTab, setActiveTab] = useState('overview');
   const [summary, setSummary] = useState(null);
   const [payments, setPayments] = useState([]);
   const [pending, setPending] = useState(null);
@@ -59,11 +61,31 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-ink text-textPrimary px-6 md:px-12 py-10 max-w-5xl mx-auto">
-      <SummaryHero summary={summary} />
-      <RecoveryApprovalCard pending={pending} onSent={loadAll} />
-      <CauseBreakdown breakdown={summary?.breakdown_by_cause} />
-      <PaymentsTable payments={payments} onSelect={handleSelectPayment} />
+    <div className="min-h-screen bg-ink text-textPrimary">
+      <Navbar
+        activeTab={activeTab}
+        onChangeTab={setActiveTab}
+        pendingCount={pending?.count || 0}
+        paymentsCount={payments.length}
+      />
+
+      <div className="max-w-6xl mx-auto px-6 md:px-12 py-10">
+        {activeTab === 'overview' && (
+          <>
+            <SummaryHero summary={summary} />
+            <CauseBreakdown breakdown={summary?.breakdown_by_cause} />
+          </>
+        )}
+
+        {activeTab === 'approvals' && (
+          <RecoveryApprovalCard pending={pending} onSent={loadAll} />
+        )}
+
+        {activeTab === 'payments' && (
+          <PaymentsTable payments={payments} onSelect={handleSelectPayment} />
+        )}
+      </div>
+
       {selectedAudit && (
         <AuditDrawer audit={selectedAudit} onClose={() => setSelectedAudit(null)} />
       )}

@@ -15,7 +15,7 @@ export default function SummaryHero({ summary }) {
   return (
     <div className="border-b border-line pb-8 mb-8">
       <p className="font-mono text-xs uppercase tracking-widest text-textMuted mb-2">
-        Revenue Recovery Agent — Batch Result
+        Recoup — Batch Result
       </p>
       <div className="flex items-baseline gap-3 mb-6">
         <span className="font-display font-700 text-6xl text-recovered tabular-nums">
