@@ -106,7 +106,7 @@ node scripts/record_batch.js "Demo batch"
 
 ## Deployment
 
-Backend deploys to [Render](https://render.com) (root directory `backend`, start command `node server.js`); frontend deploys to [Vercel](https://vercel.com) (root directory `frontend`, framework preset Vite). See [`DEVELOPER_DOCUMENTATION.md` §6](./DEVELOPER_DOCUMENTATION.md) for environment variable details.
+Backend deploys to [Render](https://render.com) (root directory `backend`, start command `node server.js`); frontend deploys to [Vercel](https://vercel.com) (root directory `frontend`, framework preset Vite). See [`DEVELOPER_DOCUMENTATION.md` ](./DEVELOPER_DOCUMENTATION.md) for environment variable details.
 
 ## Project structure
 
@@ -126,7 +126,7 @@ revenue-recovery-agent/
         └── components/
 ```
 
-Full annotated layout in [`DEVELOPER_DOCUMENTATION.md` §7](./DEVELOPER_DOCUMENTATION.md).
+Full annotated layout in [`DEVELOPER_DOCUMENTATION.md` ](./DEVELOPER_DOCUMENTATION.md).
 
 ## Documentation
 
