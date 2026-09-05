@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from './api';
-import Navbar from './components/Navbar';
+import Navbar from './components/navbar';
 import SummaryHero from './components/summaryHero';
 import RecoveryApprovalCard from './components/recoveryApprovalCard';
 import CauseBreakdown from './components/causeBreakdown';
