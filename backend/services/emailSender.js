@@ -18,6 +18,29 @@ function isNonDeliverable(email) {
   return NON_DELIVERABLE_DOMAINS.includes(domain);
 }
 
+// In Resend's sandbox (no verified domain), emails can only go to the
+// account owner's own verified address. Rather than fail silently for every
+// other recipient, this falls back to sending there instead — set once via
+// RESEND_SANDBOX_FALLBACK_EMAIL (your own Resend signup email).
+const SANDBOX_FALLBACK_EMAIL = process.env.RESEND_SANDBOX_FALLBACK_EMAIL;
+
+async function sendViaResend(to, subject, html) {
+  const res = await fetch(RESEND_API_URL, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      from: process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev',
+      to,
+      subject,
+      html
+    })
+  });
+  return res;
+}
+
 async function sendRecoveryEmail({ to, amountRupees, paymentLinkUrl, manageLink, cause }) {
   if (!process.env.RESEND_API_KEY) {
     console.warn('RESEND_API_KEY not set — skipping custom recovery email (gateway\'s native notification still sends).');
@@ -39,28 +62,22 @@ async function sendRecoveryEmail({ to, amountRupees, paymentLinkUrl, manageLink,
       </p>
     </div>
   `;
+  const subject = `Action needed: complete your ₹${amountRupees} payment`;
 
   try {
-    const res = await fetch(RESEND_API_URL, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        from: process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev', // Resend's default sender works with zero setup for testing
-        to,
-        subject: `Action needed: complete your ₹${amountRupees} payment`,
-        html
-      })
-    });
+    let res = await sendViaResend(to, subject, html);
+
+    if (!res.ok && res.status === 403 && SANDBOX_FALLBACK_EMAIL && to !== SANDBOX_FALLBACK_EMAIL) {
+      console.log(`Resend sandbox blocked ${to} — redirecting to fallback ${SANDBOX_FALLBACK_EMAIL} instead.`);
+      res = await sendViaResend(SANDBOX_FALLBACK_EMAIL, `[would go to ${to}] ${subject}`, html);
+    }
 
     if (!res.ok) {
       const errText = await res.text();
       console.error('Resend email failed:', res.status, errText);
       return false;
     }
-    console.log(`Recovery email sent to ${to} via Resend`);
+    console.log(`Recovery email sent via Resend`);
     return true;
   } catch (err) {
     console.error('Failed to send recovery email:', err.message);
