@@ -32,7 +32,7 @@ Payment fails
 - **A gateway adapter layer** — core logic isn't hardcoded to Razorpay
 - **A full audit trail** — every event, diagnosis, decision, and outcome is logged and viewable per payment, with a plain-language summary for a merchant and the full reasoning ledger underneath for anyone verifying the "how"
 
-See [`DEVELOPER_DOCUMENTATION.md`](./DEVELOPER_DOCUMENTATION.md) for the full architecture, and [`system-flow-diagram.svg`](./system-flow-diagram.svg) for a visual walkthrough.
+See [`DEVELOPER_DOCUMENTATION.md`](./DEVELOPER_DOCUMENTATION.md) for the full architecture, and [`system-flow-diagram.svg`](./system-flow-diagram.png) for a visual walkthrough.
 
 ## Tech stack
 
